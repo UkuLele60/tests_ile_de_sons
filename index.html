@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lecteur YouTube depuis Excel</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 24px; }
+    label { display:block; margin-bottom: 8px; font-weight: 600; }
+    select { width: min(900px, 100%); padding: 10px; font-size: 16px; }
+    .wrap { margin-top: 18px; width: min(900px, 100%); }
+    .video {
+      position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden;
+      border-radius: 12px;
+    }
+    .video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+    .hint { margin-top: 10px; color: #555; font-size: 14px; }
+  </style>
+
+  <!-- SheetJS (lecture XLSX côté navigateur) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <h1>Choisir une vidéo</h1>
+
+  <label for="videoSelect">Titre</label>
+  <select id="videoSelect" disabled>
+    <option>Chargement…</option>
+  </select>
+
+  <div class="wrap">
+    <div class="video">
+      <iframe
+        id="player"
+        title="YouTube player"
+        src=""
+        allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowfullscreen
+        referrerpolicy="strict-origin-when-cross-origin">
+      </iframe>
+    </div>
+    <div class="hint" id="hint"></div>
+  </div>
+
+  <script>
+    const EXCEL_PATH = "./data/videos.xlsx"; // <-- adapte si tu changes le nom/emplacement
+    const selectEl = document.getElementById("videoSelect");
+    const playerEl = document.getElementById("player");
+    const hintEl = document.getElementById("hint");
+
+    function normalizeEmbed(url) {
+      if (!url) return "";
+      const s = String(url).trim();
+
+      // Si déjà un embed
+      if (s.includes("youtube.com/embed/")) return s;
+
+      // Si c'est un watch?v=... ou youtu.be/...
+      const m = s.match(/(?:watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+      if (m) return `https://www.youtube.com/embed/${m[1]}`;
+
+      return s; // fallback
+    }
+
+    async function loadExcel() {
+      const res = await fetch(EXCEL_PATH, { cache: "no-store" });
+      if (!res.ok) throw new Error(`Impossible de charger ${EXCEL_PATH} (HTTP ${res.status})`);
+
+      const arrayBuffer = await res.arrayBuffer();
+      const wb = XLSX.read(arrayBuffer, { type: "array" });
+
+      const firstSheetName = wb.SheetNames[0];
+      const ws = wb.Sheets[firstSheetName];
+
+      // Convertit la feuille en objets JS: [{title: "...", youtube_embed: "..."}...]
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+      // Filtre les lignes valides
+      const items = rows
+        .map(r => ({
+          title: String(r.title || "").trim(),
+          embed: normalizeEmbed(r.youtube_embed || r.youtube || r.url || "")
+        }))
+        .filter(x => x.title && x.embed);
+
+      return items;
+    }
+
+    function populate(items) {
+      selectEl.innerHTML = "";
+      for (const it of items) {
+        const opt = document.createElement("option");
+        opt.value = it.embed;
+        opt.textContent = it.title;
+        selectEl.appendChild(opt);
+      }
+
+      selectEl.disabled = items.length === 0;
+
+      if (items.length === 0) {
+        hintEl.textContent = "Aucune ligne valide trouvée. Vérifie les colonnes: title + youtube_embed.";
+        playerEl.src = "";
+        return;
+      }
+
+      // Affiche la première vidéo par défaut
+      playerEl.src = items[0].embed;
+      hintEl.textContent = "Clique sur la vidéo pour la lancer.";
+    }
+
+    selectEl.addEventListener("change", () => {
+      playerEl.src = selectEl.value;
+    });
+
+    (async () => {
+      try {
+        const items = await loadExcel();
+        populate(items);
+      } catch (e) {
+        selectEl.disabled = true;
+        selectEl.innerHTML = "<option>Erreur de chargement</option>";
+        hintEl.textContent = e.message;
+        console.error(e);
+      }
+    })();
+  </script>
+</body>
+</html>
